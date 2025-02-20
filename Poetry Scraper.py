@@ -1,65 +1,82 @@
 import requests
 from bs4 import BeautifulSoup
 import json
-import os
+import time
 
-def fetch_poetry_links(base_url, pages=30):
+# 定义请求头，模拟浏览器访问
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+}
+
+# 爬取的页数范围
+MAX_PAGES = 30
+BASE_URL = "https://www.en84.com/poetry"
+
+# 诗歌数据列表
+poems = []
+
+def get_poetry_links(page_url):
+    """获取诗歌详情页的链接"""
+    response = requests.get(page_url, headers=HEADERS)
+    if response.status_code != 200:
+        print(f"Failed to fetch {page_url}")
+        return []
+
+    soup = BeautifulSoup(response.text, "html.parser")
     links = []
-    for page in range(2, pages):
-        url = f"{base_url}/page/{page}/"
-        response = requests.get(url)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        for article in soup.find_all('h2', class_='entry-title'):
-            link = article.find('a')
-            if link and link['href']:
-                links.append(link['href'])
+    for article in soup.find_all("article"):
+        link_tag = article.find("a")
+        if link_tag and link_tag["href"]:
+            links.append(link_tag["href"])
     return links
 
-def fetch_poem_content(url):
-    response = requests.get(url)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, 'html.parser')
+def get_poetry_content(poetry_url):
+    """获取诗歌内容"""
+    response = requests.get(poetry_url, headers=HEADERS)
+    if response.status_code != 200:
+        print(f"Failed to fetch {poetry_url}")
+        return None
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    title = soup.find("h1", class_="entry-title").get_text(strip=True)
     
-    title = soup.find('h1', class_='entry-title').get_text(strip=True) if soup.find('h1', class_='entry-title') else "Untitled"
-    content_div = soup.find('div', class_='entry-content')
-    
+    # 诗歌正文
+    content_div = soup.find("div", class_="entry-content")
     if not content_div:
         return None
+
+    paragraphs = content_div.find_all("p")
+    if not paragraphs or len(paragraphs) < 2:
+        return None
     
-    paragraphs = content_div.find_all('p')
-    chinese_lines, english_lines = [], []
-    
-    for p in paragraphs:
-        text = p.get_text(strip=True)
-        if any(c.isalpha() for c in text):
-            english_lines.append(text)
-        else:
-            chinese_lines.append(text)
-    
+    # 假设正文前半部分是中文，后半部分是英文
+    middle_idx = len(paragraphs) // 2
+    chinese_text = "\n".join([p.get_text(strip=True) for p in paragraphs[:middle_idx]])
+    english_text = "\n".join([p.get_text(strip=True) for p in paragraphs[middle_idx:]])
+
     return {
-        'title': title,
-        'chinese': '\n'.join(chinese_lines),
-        'english': '\n'.join(english_lines)
+        "title": title,
+        "chinese": chinese_text,
+        "english": english_text,
+        "url": poetry_url
     }
 
-def save_to_json(data, filename='poems.json'):
-    with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-
-def main():
-    base_url = "https://www.en84.com/poetry"
-    poem_links = fetch_poetry_links(base_url, pages=30)
+# 遍历所有页面
+for page in range(1, MAX_PAGES + 1):
+    page_url = BASE_URL if page == 1 else f"{BASE_URL}/page/{page}/"
+    print(f"Fetching: {page_url}")
     
-    poems = []
-    for link in poem_links:
-        poem = fetch_poem_content(link)
-        if poem:
-            poems.append(poem)
-    
-    save_to_json(poems)
-    print(f"Saved {len(poems)} poems to poems.json")
+    poetry_links = get_poetry_links(page_url)
+    for poetry_url in poetry_links:
+        print(f"Scraping: {poetry_url}")
+        poetry_data = get_poetry_content(poetry_url)
+        if poetry_data:
+            poems.append(poetry_data)
+        
+        time.sleep(1)  # 避免触发反爬虫
 
-if __name__ == "__main__":
-    main()
+# 保存为 JSON 文件
+with open("poems.json", "w", encoding="utf-8") as f:
+    json.dump(poems, f, ensure_ascii=False, indent=4)
+
+print(f"爬取完成，共保存 {len(poems)} 首诗歌到 poems.json")
